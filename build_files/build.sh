@@ -1,27 +1,34 @@
 #!/bin/bash
-
+# Steambox build — exécuté DANS le build de l'image (voir Containerfile).
 set -ouex pipefail
 
-# Copy the contents of system_files/ of the git repo to /
+# Copie des fichiers système du repo vers / (SSH, udev wake, hook AV, firstboot…)
 cp -avf "/ctx/system_files"/. /
 
-### Install packages
+### Paquets (dépôts Fedora)
+# openrgb : pilotage du ruban ARGB (header ASUS) — livre aussi ses règles udev
+# python3-pip : pour installer samsungtvws dans l'image
+dnf5 install -y openrgb python3-pip
 
-# Packages can be installed from any enabled yum repo on the image.
-# RPMfusion repos are available by default in ublue main images
-# List of rpmfusion packages can be found here:
-# https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
+### CoolerControl (COPR) — courbes ventilos boîtier. Décommenter si voulu.
+# dnf5 -y copr enable codifryed/CoolerControl
+# dnf5 -y install coolercontrol
+# dnf5 -y copr disable codifryed/CoolerControl
+# systemctl enable coolercontrold.service
 
-# this installs a package from fedora repos
-dnf5 install -y tmux
+### API TV Samsung (Tizen WebSocket) — utilisée par le hook AV suspend/resume
+pip3 install --prefix=/usr --no-cache-dir samsungtvws websocket-client requests
 
-# Use a COPR Example:
-#
-# dnf5 -y copr enable ublue-os/staging
-# dnf5 -y install package
-# Disable COPRs so they don't end up enabled on the final image:
-# dnf5 -y copr disable ublue-os/staging
+### Droits d'exécution des scripts embarqués
+chmod 0755 /usr/libexec/steambox-av \
+           /usr/libexec/steambox-firstboot \
+           /usr/libexec/steambox-udp-gso-off \
+           /etc/systemd/system-sleep/10-steambox-av
 
-#### Example for enabling a System Unit File
-
-systemctl enable podman.socket
+### Services
+# sshd : accès SSH garanti dès le premier boot, quoi qu'il arrive
+systemctl enable sshd.service
+# firstboot : dépose la clé SSH publique dans ~/.ssh du 1er utilisateur (UID 1000)
+systemctl enable steambox-firstboot.service
+# workaround régression UDP-GSO kernel 7.x sur Realtek r8169/RTL8125
+systemctl enable steambox-udp-gso-off.service

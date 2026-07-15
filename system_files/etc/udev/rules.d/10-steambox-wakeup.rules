@@ -1,0 +1,3 @@
+# Réveil de la machine par le dongle USB 2.4 GHz 8BitDo (idVendor 2dc8).
+# Prérequis BIOS : Wake-from-USB ON + ErP OFF.
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="2dc8", ATTR{power/wakeup}="enabled"

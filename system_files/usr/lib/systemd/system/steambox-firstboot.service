@@ -1,0 +1,12 @@
+[Unit]
+Description=Steambox - provisioning du premier boot (cle SSH du 1er utilisateur)
+ConditionPathExists=!/var/lib/steambox/.firstboot-done
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/steambox-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

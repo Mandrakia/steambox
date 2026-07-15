@@ -1,0 +1,12 @@
+[Unit]
+Description=Steambox - desactive UDP-GSO sur les NIC Realtek r8169 (bug kernel 7.x)
+After=network-pre.target systemd-udev-settle.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/steambox-udp-gso-off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

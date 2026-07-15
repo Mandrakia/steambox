@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Workaround régression kernel 7.x : tx-udp-segmentation (UDP-GSO) cassé sur
+# Realtek r8169/RTL8125 -> gros flux UDP perdus (Sunshine/Moonlight, etc.).
+# Réf : LizardByte/Sunshine#5067. À retirer quand le kernel est corrigé.
+set -uo pipefail
+for dev in /sys/class/net/*; do
+  iface=$(basename "$dev")
+  drv=$(readlink -f "$dev/device/driver" 2>/dev/null | xargs -r basename)
+  if [ "$drv" = "r8169" ]; then
+    ethtool -K "$iface" tx-udp-segmentation off 2>/dev/null \
+      && logger -t steambox "UDP-GSO désactivé sur $iface (r8169)"
+  fi
+done
+exit 0

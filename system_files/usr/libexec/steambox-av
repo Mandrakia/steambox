@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Steambox AV — pilote la TV Samsung (WoL + Tizen WebSocket) et la barre
+# Yamaha YSP-2700 (MusicCast YXC) au suspend/resume de la machine.
+# Usage : steambox-av resume | suspend
+set -uo pipefail
+
+CONF=/etc/steambox/av.env
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && . "$CONF"
+: "${TV_IP:=}" "${TV_MAC:=}" "${YSP_IP:=}" "${YSP_INPUT:=hdmi1}" \
+  "${SUSPEND_POLICY:=handoff}" "${TV_OFF_ON_SUSPEND:=yes}"
+
+TOKEN_FILE=/var/lib/steambox/tv-token.txt
+log(){ logger -t steambox-av "$*"; }
+
+# ---------- Yamaha YSP-2700 (YXC) ----------
+YXC="http://$YSP_IP/YamahaExtendedControl/v1"
+ysp(){ [ -n "$YSP_IP" ] && curl -s -m3 "$YXC/$1" >/dev/null 2>&1 || true; }
+ysp_input(){ curl -s -m3 "$YXC/main/getStatus" 2>/dev/null | grep -o '"input":"[^"]*"' | cut -d'"' -f4; }
+
+# ---------- TV Samsung (WoL + samsungtvws) ----------
+tv_wol(){
+  [ -n "$TV_MAC" ] || return 0
+  python3 - "$TV_MAC" <<'EOF'
+import socket, sys
+mac = sys.argv[1].replace(":", "").replace("-", "")
+pkt = bytes.fromhex("f" * 12 + mac * 16)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+s.sendto(pkt, ("255.255.255.255", 9))
+EOF
+}
+
+tv_power_toggle(){
+  [ -n "$TV_IP" ] || return 0
+  python3 - "$TV_IP" "$TOKEN_FILE" <<'EOF' 2>/dev/null || true
+import sys
+from samsungtvws import SamsungTVWS
+tv = SamsungTVWS(host=sys.argv[1], port=8002, token_file=sys.argv[2], name="steambox")
+tv.shortcuts().power()
+EOF
+}
+
+tv_wait_up(){
+  # attend que l'API Tizen (port 8002) réponde, max $1 s
+  [ -n "$TV_IP" ] || return 0
+  local deadline=$(( $(date +%s) + ${1:-15} ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    (exec 3<>"/dev/tcp/$TV_IP/8002") 2>/dev/null && { exec 3>&- 3<&-; return 0; }
+    sleep 1
+  done
+  return 1
+}
+
+case "${1:-}" in
+  resume)
+    log "resume: WoL TV + YSP on + input $YSP_INPUT"
+    # 1) allumer la TV (3 magic packets), la carte réseau vient de remonter
+    for _ in 1 2 3; do tv_wol; sleep 1; done
+    # 2) allumer la barre et forcer son entrée HDMI.
+    #    Boucle anti-course : l'Anynet+ de la TV tire la YSP sur "tv" en one-shot
+    #    à l'allumage ; on repose l'entrée jusqu'à 3 lectures stables.
+    ysp "main/setPower?power=on"
+    ok=0
+    for _ in $(seq 12); do
+      ysp "main/setInput?input=$YSP_INPUT"
+      sleep 0.7
+      [ "$(ysp_input)" = "$YSP_INPUT" ] && ok=$((ok+1)) || ok=0
+      [ "$ok" -ge 3 ] && break
+    done
+    log "resume: YSP input=$(ysp_input)"
+    ;;
+  suspend)
+    log "suspend: policy=$SUSPEND_POLICY"
+    if [ "$SUSPEND_POLICY" = "handoff" ]; then
+      ysp "main/setInput?input=tv"   # rendre la main à la box (ARC)
+    fi
+    ysp "main/setPower?power=standby"
+    if [ "$TV_OFF_ON_SUSPEND" = "yes" ]; then
+      tv_wait_up 3 && tv_power_toggle  # KEY_POWER = toggle -> n'envoyer que si la TV répond
+    fi
+    ;;
+  *)
+    echo "usage: $0 resume|suspend" >&2
+    exit 2
+    ;;
+esac

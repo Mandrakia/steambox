@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Steambox firstboot — dépose la/les clé(s) SSH publique(s) embarquées dans
+# l'image dans le ~/.ssh/authorized_keys du premier utilisateur (UID 1000),
+# celui créé dans l'installeur Anaconda. Idempotent, ne tourne qu'une fois.
+set -euo pipefail
+
+STAMP=/var/lib/steambox/.firstboot-done
+[ -e "$STAMP" ] && exit 0
+mkdir -p /var/lib/steambox
+
+KEYS=/usr/share/steambox/authorized_keys
+entry=$(getent passwd 1000 || true)
+if [ -n "$entry" ] && [ -f "$KEYS" ]; then
+  user=$(echo "$entry" | cut -d: -f1)
+  group=$(id -gn "$user")
+  home=$(echo "$entry" | cut -d: -f6)
+  install -d -m 700 -o "$user" -g "$group" "$home/.ssh"
+  touch "$home/.ssh/authorized_keys"
+  while IFS= read -r key; do
+    [ -z "$key" ] && continue
+    grep -qxF "$key" "$home/.ssh/authorized_keys" || echo "$key" >> "$home/.ssh/authorized_keys"
+  done < "$KEYS"
+  chmod 600 "$home/.ssh/authorized_keys"
+  chown "$user:$group" "$home/.ssh/authorized_keys"
+  logger -t steambox-firstboot "clé(s) SSH déposée(s) pour $user"
+fi
+
+touch "$STAMP"
